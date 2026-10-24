@@ -4,7 +4,7 @@ import { stdin, stdout } from 'node:process';
 import { configDirectory, DEFAULT_MODEL, loadConfig, removeConfig, validateModel } from './config.mjs';
 import { runTurn } from './agent.mjs';
 import { resolveWorkspaceRoot } from './workspace.mjs';
-import { createAndSaveProjectApiKey } from './key-setup.mjs';
+import { saveProjectApiKey } from './key-setup.mjs';
 
 function usage() {
   console.log(`TDCC Tools (one project key; no pool or rotation)
@@ -26,6 +26,47 @@ function terminal() {
   return createInterface({ input: stdin, output: stdout });
 }
 
+function hiddenInput(prompt) {
+  if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
+    throw new Error('Input key tersembunyi memerlukan terminal interaktif.');
+  }
+  return new Promise((resolve, reject) => {
+    const chars = [];
+    const cleanup = () => {
+      stdin.off('data', onData);
+      stdin.setRawMode(false);
+      stdin.pause();
+    };
+    const onData = chunk => {
+      for (const char of String(chunk)) {
+        if (char === '\u0003' || char === '\u0004') {
+          cleanup();
+          stdout.write('\n');
+          reject(new Error('Dibatalkan.'));
+          return;
+        }
+        if (char === '\r' || char === '\n') {
+          cleanup();
+          stdout.write('\n');
+          resolve(chars.join(''));
+          return;
+        }
+        if (char === '\u007f' || char === '\b') chars.pop();
+        else if (!/[\u0000-\u001f\u007f]/.test(char)) chars.push(char);
+      }
+    };
+    try {
+      stdin.setRawMode(true);
+      stdin.on('data', onData);
+      stdin.resume();
+      stdout.write(prompt);
+    } catch {
+      cleanup();
+      reject(new Error('Terminal tidak dapat menerima input key tersembunyi.'));
+    }
+  });
+}
+
 async function setup() {
   const existing = await loadConfig();
   if (existing) {
@@ -43,11 +84,11 @@ async function setup() {
     rl.close();
   }
 
-  console.log('Setup akan meminta tepat satu key melalui endpoint pada Gist; endpoint ini belum diverifikasi resmi atau live.');
-  console.log('Tidak ada retry. Jika hasil POST tidak pasti, periksa console TDCC sebelum mencoba setup lagi.');
-  const created = await createAndSaveProjectApiKey({ model });
-  console.log(`Satu key (nama: ${created.name}) tersimpan di ${configDirectory()} dengan permission privat; nilainya tidak ditampilkan.`);
-  console.log('Key tersimpan digunakan untuk chat dan tool calls. Permintaan chat pertama hanya dikirim setelah kamu memasukkan prompt.');
+  console.log('Setup tidak membuat atau memvalidasi key. Masukkan hanya API key project yang diberikan melalui kanal resmi TDCC.');
+  const apiKey = process.env.TDCC_API_KEY || await hiddenInput('API key project TDCC (input tersembunyi): ');
+  const saved = await saveProjectApiKey({ apiKey, model });
+  console.log(`Key yang kamu berikan tersimpan di ${configDirectory()} dengan permission privat; nilainya tidak ditampilkan.`);
+  console.log(`Model: ${saved.model}. Setup tidak mengirim request ke TDCC; permintaan chat baru dikirim setelah kamu memasukkan prompt.`);
 }
 
 async function status() {

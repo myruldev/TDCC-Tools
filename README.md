@@ -1,25 +1,12 @@
 # TDCC Tools — CLI lokal dengan tool workspace terbatas
 
-Asisten terminal Node.js ini meminta tepat satu API key pada setup, menyimpan key di luar repo, lalu memakai key yang sama untuk chat dan tool calls. Tidak ada pool, key pengganti, rotasi otomatis, retry, atau shell bebas. Tool workspace tetap dibatasi ke direktori yang dipilih dan tindakan tulis/eksekusi membutuhkan persetujuan.
+Asisten terminal Node.js ini meminta satu API key project yang sudah diberikan melalui kanal resmi TDCC, menyimpan key di luar repo, lalu memakai key yang sama untuk chat dan tool calls. Setup tidak membuat atau memvalidasi key. Tidak ada pool, key pengganti, rotasi otomatis, retry, atau shell bebas. Tool workspace tetap dibatasi ke direktori yang dipilih dan tindakan tulis/eksekusi membutuhkan persetujuan.
 
-## Pembuatan satu key otomatis
+## Key project resmi
 
-`node src/cli.mjs setup` meminta satu key lewat endpoint yang dipakai Gist:
+Dokumentasi publik TDCC menyebut API key project-scoped, tetapi tidak mendokumentasikan endpoint provisioning key. Karena itu, `node src/cli.mjs setup` **tidak memanggil** `POST /api/keys` dari Gist dan tidak bisa membuktikan bahwa nilai yang dikembalikan endpoint itu adalah kredensial TDCC yang sah.
 
-```http
-POST https://chat.decentralizedcompute.company/api/keys
-Content-Type: application/json
-
-{"name":"agent-<timestamp>"}
-```
-
-Sesuai kode Gist, program mengharapkan respons JSON dengan field `key`, menyimpan nilai itu ke konfigurasi lokal privat, dan tidak menampilkannya. Permintaan setup hanya dikirim satu kali. Jika konfigurasi lokal sudah berisi key, setup berhenti tanpa meminta key baru.
-
-**Batas verifikasi:** endpoint `POST /api/keys` hanya didapat dari [Gist contoh](https://gist.github.com/fzn0x/1253c6fd5995a5629bf3a255dd6d6648); dokumentasi publik resmi TDCC yang diperiksa tidak mengonfirmasi endpoint atau kontrak provisioning tersebut. Endpoint pembuatan key, endpoint chat, kompatibilitas tool calls, dan ketersediaan model belum diverifikasi resmi/live. Tes proyek menggunakan mock dan tidak mengirim request ke TDCC. Gunakan hanya jika memahami bahwa kontrak endpoint ini belum dikonfirmasi TDCC.
-
-Permintaan yang timeout, terputus, atau memberi respons sukses dengan format tak terduga bisa saja sudah membuat key di server. Tidak ada retry otomatis: periksa console TDCC sebelum mencoba setup lagi. HTTP 429 menghentikan setup dan menampilkan `Retry-After` bila tersedia; program tidak meminta key pengganti. Jika key berhasil dibuat tetapi gagal disimpan lokal, program meminta key itu dicabut melalui console TDCC sebelum setup dicoba lagi.
-
-Dokumentasi resmi [TDCC App](https://decentralizedcompute.company/app.html) menyebut gateway kompatibel OpenAI dan Anthropic, memberi contoh base URL Anthropic `https://decentralizedcompute.company/api/anthropic`, serta menyebut API key project-scoped dan rotation. Namun halaman itu tidak merinci `POST /api/keys`, path chat lengkap, dukungan tool-use, ID model yang tersedia untuk akun ini, ataupun batas request-per-minute per key. Tidak ada fallback ke endpoint atau model pada Gist.
+Gist contoh memakai host dan endpoint yang tidak tercantum di dokumentasi resmi serta model `tdcc-chat`. Sebuah respons JSON yang berisi field `key` tidak membuktikan bahwa key itu terikat ke project TDCC. Karena itu, masukkan hanya key project yang benar-benar diberikan TDCC; jangan memakai atau membuat key lewat endpoint Gist.
 
 ## Persyaratan dan setup
 
@@ -30,7 +17,7 @@ node --version
 node src/cli.mjs setup
 ```
 
-Setup meminta model ID, lalu membuat satu key. Default `deepseek/deepseek-v4-flash-free` adalah contoh pada halaman TDCC, tetapi ketersediaan untuk project/cohort kamu **tidak dijamin dan belum diuji live**. Ganti dengan model ID yang diberikan TDCC jika berbeda.
+Setup meminta model ID dan key project resmi. Key dapat dimasukkan dengan input tersembunyi di terminal, atau melalui environment `TDCC_API_KEY`; setup tidak mengirim request jaringan. Default `deepseek/deepseek-v4-flash-free` dan base URL Anthropic `https://decentralizedcompute.company/api/anthropic` mengikuti contoh pada [halaman TDCC App](https://decentralizedcompute.company/app.html). Akses model untuk project/cohort kamu belum diuji live; pakai ID yang diberikan TDCC jika berbeda.
 
 Key disimpan di luar repo: `~/.config/tdcc-tools/config.json` (atau `$XDG_CONFIG_HOME/tdcc-tools/config.json`), dengan direktori permission `700` dan file `600` pada Linux/macOS. Penyimpanan ini tidak terenkripsi. Jangan menyalin file itu ke repo atau membagikannya. Untuk mengecek konfigurasi tanpa menampilkan key:
 
@@ -65,12 +52,12 @@ Tool yang tersedia:
 
 Konten file yang dibaca masuk ke percakapan dan dikirim ke TDCC. Filter nama file bukan jaminan bahwa file lain tidak memuat rahasia; periksa workspace sebelum memakainya. Riwayat chat hanya disimpan dalam memori proses dan hilang ketika CLI keluar. Tool tidak mengirim request chat sebelum kamu memasukkan prompt.
 
-Integrasi memakai endpoint Anthropic Messages di bawah base URL TDCC yang dipublikasikan dan menyertakan definisi tool dalam request. Namun path gabungan dan dukungan tool-use belum dikonfirmasi TDCC atau diuji live. Jika endpoint/model/tool-use ditolak, program melaporkan error; jangan menambahkan fallback endpoint Gist tanpa konfirmasi resmi.
+Integrasi memakai base URL Anthropic yang dipublikasikan TDCC dan route standar Anthropic `/v1/messages`, sehingga URL request penuh adalah `https://decentralizedcompute.company/api/anthropic/v1/messages`. Pesan dan definisi tool memakai format Anthropic; dukungan live untuk akun, model, dan tool-use belum diuji. Jika ditolak, program melaporkan error dan tidak mencoba endpoint Gist atau fallback lain.
 
 ## Kuota dan perilaku API
 
-- Satu key project-scoped dipakai untuk konfigurasi; tidak ada pool, minting pengganti, failover, retry, atau rotasi otomatis.
-- Jika pembuatan key atau chat menerima HTTP 429, program berhenti dan menampilkan `Retry-After` bila tersedia. Tunggu arahan TDCC; jangan membuat key tambahan untuk menghindari kuota.
+- Satu key project-scoped yang diberikan pemilik dipakai untuk konfigurasi; program tidak melakukan minting, failover, retry, atau rotasi otomatis.
+- Jika chat menerima HTTP 429, program berhenti dan menampilkan `Retry-After` bila tersedia. Tunggu arahan TDCC; jangan membuat key tambahan untuk menghindari kuota.
 - Halaman TDCC menyebut kuota early-access per cohort dapat membatasi concurrency dan belanja, serta kenaikan dapat diminta. Angka pasti per akun, request/minute, cakupan model, dan jadwal reset tidak dipublikasikan di halaman tersebut.
 - Halaman resmi menyebut preview/early-access dan request shape dapat berubah sebelum API dinyatakan stabil. Tes lokal tidak membuktikan key, endpoint, model, atau tool-use bekerja live.
 
@@ -80,12 +67,12 @@ Integrasi memakai endpoint Anthropic Messages di bawah base URL TDCC yang dipubl
 npm test
 ```
 
-Tes menggunakan mock HTTP dan direktori sementara. Tes provisioning memastikan paling banyak satu POST per percobaan, tidak mengirim request nyata ke endpoint key/chat, dan tidak mengubah `/pentest-web`.
+Tes menggunakan mock dan direktori sementara. Tes memastikan key yang disediakan pemilik disimpan tanpa menampilkan nilainya; tidak ada request ke endpoint provisioning atau chat TDCC, dan tidak mengubah `/pentest-web`.
 
 ## Referensi
 
 - [TDCC App — gateway, API, autentikasi, dan kuota cohort](https://decentralizedcompute.company/app.html)
 - [Halaman akun TDCC](https://decentralizedcompute.company/account.html) — menjelaskan akun umum, bukan alur API-key rinci
-- [Gist contoh awal](https://gist.github.com/fzn0x/1253c6fd5995a5629bf3a255dd6d6648) — sumber endpoint provisioning yang dipakai pada setup ini; endpoint tersebut belum dikonfirmasi dokumentasi resmi
+- [Gist contoh awal](https://gist.github.com/fzn0x/1253c6fd5995a5629bf3a255dd6d6648) — contoh tidak resmi; endpoint provisioning dan modelnya tidak dipakai oleh versi ini
 
 Repositori proyek: <https://github.com/myruldev/TDCC-Tools> (branch `main`).
