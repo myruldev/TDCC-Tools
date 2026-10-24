@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import { configDirectory, DEFAULT_MODEL, loadConfig, removeConfig, saveConfig } from './config.mjs';
+import { configDirectory, DEFAULT_MODEL, loadConfig, removeConfig, validateModel } from './config.mjs';
 import { runTurn } from './agent.mjs';
 import { resolveWorkspaceRoot } from './workspace.mjs';
+import { createAndSaveProjectApiKey } from './key-setup.mjs';
 
 function usage() {
-  console.log(`TDCC Tools (one project key; no key creation or rotation pool)
+  console.log(`TDCC Tools (one project key; no pool or rotation)
 
 Commands:
   node src/cli.mjs setup
@@ -25,63 +26,28 @@ function terminal() {
   return createInterface({ input: stdin, output: stdout });
 }
 
-async function readHidden(prompt) {
-  if (!stdin.isTTY || !stdout.isTTY || typeof stdin.setRawMode !== 'function') {
-    throw new Error('Input key tersembunyi memerlukan terminal interaktif yang mendukung raw mode.');
-  }
-  stdout.write(prompt);
-  const wasRaw = Boolean(stdin.isRaw);
-  stdin.setEncoding('utf8');
-  stdin.setRawMode(true);
-  stdin.resume();
-  return new Promise((resolve, reject) => {
-    let value = '';
-    let finished = false;
-    const finish = error => {
-      if (finished) return;
-      finished = true;
-      stdin.off('data', onData);
-      process.off('SIGINT', onSignal);
-      stdin.setRawMode(wasRaw);
-      stdout.write('\n');
-      if (error) reject(error);
-      else resolve(value);
-    };
-    const onSignal = () => finish(new Error('Input key dibatalkan.'));
-    const onData = chunk => {
-      for (const character of chunk) {
-        if (character === '\u0003') return finish(new Error('Input key dibatalkan.'));
-        if (character === '\r' || character === '\n') return finish();
-        if (character === '\u007f' || character === '\b') {
-          value = Array.from(value).slice(0, -1).join('');
-          continue;
-        }
-        if (character === '\u0015') {
-          value = '';
-          continue;
-        }
-        if (character >= ' ' && character !== '\u007f' && character !== '\u001b') value += character;
-      }
-    };
-    stdin.on('data', onData);
-    process.once('SIGINT', onSignal);
-  });
-}
-
 async function setup() {
-  console.log(`Base URL resmi TDCC: https://decentralizedcompute.company/api/anthropic`);
-  console.log('Model di bawah adalah contoh pada halaman TDCC; ketersediaan untuk akunmu tidak dijamin.');
-  const apiKey = (await readHidden('API key proyek TDCC (input disembunyikan): ')).trim();
-  if (!apiKey) throw new Error('API key kosong; konfigurasi tidak disimpan.');
+  const existing = await loadConfig();
+  if (existing) {
+    console.log('Setup berhenti tanpa membuat key: konfigurasi lokal sudah berisi satu key.');
+    console.log('Agar tidak menambah key yang tidak perlu, cabut key lama di console TDCC sebelum menghapus konfigurasi lokal dan menjalankan setup lagi.');
+    return;
+  }
+
   const rl = terminal();
+  let model;
   try {
     const answer = (await rl.question(`Model ID [${DEFAULT_MODEL}]: `)).trim();
-    await saveConfig({ apiKey, model: answer || DEFAULT_MODEL });
-    console.log(`Konfigurasi tersimpan di ${configDirectory()} dengan permission privat. Key tidak dicetak dan tidak diletakkan di repository.`);
-    console.log('Setup tidak menguji key. Permintaan pertama hanya terjadi setelah kamu mengirim prompt pada sesi chat.');
+    model = validateModel(answer || DEFAULT_MODEL);
   } finally {
     rl.close();
   }
+
+  console.log('Setup akan meminta tepat satu key melalui endpoint pada Gist; endpoint ini belum diverifikasi resmi atau live.');
+  console.log('Tidak ada retry. Jika hasil POST tidak pasti, periksa console TDCC sebelum mencoba setup lagi.');
+  const created = await createAndSaveProjectApiKey({ model });
+  console.log(`Satu key (nama: ${created.name}) tersimpan di ${configDirectory()} dengan permission privat; nilainya tidak ditampilkan.`);
+  console.log('Key tersimpan digunakan untuk chat dan tool calls. Permintaan chat pertama hanya dikirim setelah kamu memasukkan prompt.');
 }
 
 async function status() {
@@ -94,7 +60,7 @@ async function status() {
   console.log('API key: tersimpan (nilainya tidak ditampilkan)');
   console.log(`Model: ${config.model}`);
   console.log('Endpoint: https://decentralizedcompute.company/api/anthropic');
-  console.log('Key tunggal; tidak ada auto-retry, rotasi, atau pool. Status layanan/kuota tidak diperiksa oleh perintah ini.');
+  console.log('Satu key tersimpan; tidak ada pool, rotasi, key pengganti, atau retry otomatis. Status layanan/kuota tidak diperiksa oleh perintah ini.');
 }
 
 async function removeKey() {
